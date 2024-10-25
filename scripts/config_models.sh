@@ -40,6 +40,11 @@ MODEL_SELECT() {
             MODEL_TEMPLATE_TYPE="meta-llama3"
             MODEL_FRAMEWORK="vllm"
             ;;
+        Phi-3.5-mini-instruct)
+            MODEL_PATH="${MODEL_DIR}/Phi-3.5-mini-instruct"
+            MODEL_TEMPLATE_TYPE="Phi3"
+            MODEL_FRAMEWORK="hf"
+            ;;
         jamba1.5-mini)
             MODEL_PATH="${MODEL_DIR}/Jamba-1.5-Mini"
             MODEL_TEMPLATE_TYPE="jamba"

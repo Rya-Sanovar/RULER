@@ -24,8 +24,8 @@ fi
 
 # Root Directories
 GPUS="1" # GPU size for tensor_parallel.
-ROOT_DIR="benchmark_root" # the path that stores generated task samples and model predictions.
-MODEL_DIR="../.." # the path that contains individual model folders from HUggingface.
+ROOT_DIR="benchmark_RULER_root" # the path that stores generated task samples and model predictions.
+MODEL_DIR="microsoft" # the path that contains individual model folders from HUggingface.
 ENGINE_DIR="." # the path that contains individual engine folders from TensorRT-LLM.
 BATCH_SIZE=1  # increase to improve GPU utilization
 
@@ -35,6 +35,19 @@ source config_models.sh
 MODEL_NAME=${1}
 MODEL_CONFIG=$(MODEL_SELECT ${MODEL_NAME} ${MODEL_DIR} ${ENGINE_DIR})
 IFS=":" read MODEL_PATH MODEL_TEMPLATE_TYPE MODEL_FRAMEWORK TOKENIZER_PATH TOKENIZER_TYPE OPENAI_API_KEY GEMINI_API_KEY AZURE_ID AZURE_SECRET AZURE_ENDPOINT <<< "$MODEL_CONFIG"
+
+# Print for debugging
+echo "MODEL_PATH: $MODEL_PATH"
+echo "MODEL_TEMPLATE_TYPE: $MODEL_TEMPLATE_TYPE"
+echo "MODEL_FRAMEWORK: $MODEL_FRAMEWORK"
+echo "TOKENIZER_PATH: $TOKENIZER_PATH"
+echo "TOKENIZER_TYPE: $TOKENIZER_TYPE"
+echo "OPENAI_API_KEY: $OPENAI_API_KEY"
+echo "GEMINI_API_KEY: $GEMINI_API_KEY"
+echo "AZURE_ID: $AZURE_ID"
+echo "AZURE_SECRET: $AZURE_SECRET"
+echo "AZURE_ENDPOINT: $AZURE_ENDPOINT"
+
 if [ -z "${MODEL_PATH}" ]; then
     echo "Model: ${MODEL_NAME} is not supported"
     exit 1
