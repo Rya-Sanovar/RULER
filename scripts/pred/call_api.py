@@ -42,16 +42,21 @@ import time
 from tqdm import tqdm
 from pathlib import Path
 import traceback
-from nemo.collections.asr.parts.utils.manifest_utils import read_manifest
+from manifest import read_manifest, write_manifest
+# from nemo.collections.asr.parts.utils.manifest_utils import read_manifest
+
+# SERVER_TYPES = (
+#     'trtllm',
+#     'vllm',
+#     'sglang',
+#     'openai',
+#     'gemini',
+#     'hf',
+#     'mamba',
+# )
 
 SERVER_TYPES = (
-    'trtllm',
-    'vllm',
-    'sglang',
-    'openai',
-    'gemini',
     'hf',
-    'mamba',
 )
 
 
@@ -96,77 +101,77 @@ if args.server_type == 'hf' or args.server_type == 'gemini':
 
 
 def get_llm(tokens_to_generate):
-    if args.server_type == 'trtllm':
-        from client_wrappers import TRTLLMClient
-        llm = TRTLLMClient(
-            server_host=args.server_host,
-            server_port=args.server_port,
-            ssh_server=args.ssh_server,
-            ssh_key_path=args.ssh_key_path,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            random_seed=args.random_seed,
-            stop=args.stop_words,
-            tokens_to_generate=tokens_to_generate,
-            max_attention_window_size=args.sliding_window_size,
-        )
+    # if args.server_type == 'trtllm':
+    #     from client_wrappers import TRTLLMClient
+    #     llm = TRTLLMClient(
+    #         server_host=args.server_host,
+    #         server_port=args.server_port,
+    #         ssh_server=args.ssh_server,
+    #         ssh_key_path=args.ssh_key_path,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         random_seed=args.random_seed,
+    #         stop=args.stop_words,
+    #         tokens_to_generate=tokens_to_generate,
+    #         max_attention_window_size=args.sliding_window_size,
+    #     )
 
-    elif args.server_type == 'vllm':
-        from client_wrappers import VLLMClient
-        llm = VLLMClient(
-            server_host=args.server_host,
-            server_port=args.server_port,
-            ssh_server=args.ssh_server,
-            ssh_key_path=args.ssh_key_path,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            random_seed=args.random_seed,
-            stop=args.stop_words,
-            tokens_to_generate=tokens_to_generate,
-        )
+    # elif args.server_type == 'vllm':
+    #     from client_wrappers import VLLMClient
+    #     llm = VLLMClient(
+    #         server_host=args.server_host,
+    #         server_port=args.server_port,
+    #         ssh_server=args.ssh_server,
+    #         ssh_key_path=args.ssh_key_path,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         random_seed=args.random_seed,
+    #         stop=args.stop_words,
+    #         tokens_to_generate=tokens_to_generate,
+    #     )
 
-    elif args.server_type == 'sglang':
-        from client_wrappers import SGLClient
-        llm = SGLClient(
-            server_host=args.server_host,
-            server_port=args.server_port,
-            ssh_server=args.ssh_server,
-            ssh_key_path=args.ssh_key_path,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            random_seed=args.random_seed,
-            stop=args.stop_words,
-            tokens_to_generate=tokens_to_generate,
-        )
+    # elif args.server_type == 'sglang':
+    #     from client_wrappers import SGLClient
+    #     llm = SGLClient(
+    #         server_host=args.server_host,
+    #         server_port=args.server_port,
+    #         ssh_server=args.ssh_server,
+    #         ssh_key_path=args.ssh_key_path,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         random_seed=args.random_seed,
+    #         stop=args.stop_words,
+    #         tokens_to_generate=tokens_to_generate,
+    #     )
         
-    elif args.server_type == 'openai':
-        from client_wrappers import OpenAIClient
-        llm = OpenAIClient(
-            model_name=args.model_name_or_path,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            random_seed=args.random_seed,
-            stop=args.stop_words,
-            tokens_to_generate=tokens_to_generate,
-        )
+    # elif args.server_type == 'openai':
+    #     from client_wrappers import OpenAIClient
+    #     llm = OpenAIClient(
+    #         model_name=args.model_name_or_path,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         random_seed=args.random_seed,
+    #         stop=args.stop_words,
+    #         tokens_to_generate=tokens_to_generate,
+    #     )
 
-    elif args.server_type == 'gemini':
-        from client_wrappers import GeminiClient
-        llm = GeminiClient(
-            model_name=args.model_name_or_path,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            random_seed=args.random_seed,
-            stop=args.stop_words,
-            tokens_to_generate=tokens_to_generate,
-        )
+    # elif args.server_type == 'gemini':
+    #     from client_wrappers import GeminiClient
+    #     llm = GeminiClient(
+    #         model_name=args.model_name_or_path,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         random_seed=args.random_seed,
+    #         stop=args.stop_words,
+    #         tokens_to_generate=tokens_to_generate,
+    #     )
         
-    elif args.server_type == 'hf':
+    if args.server_type == 'hf':
         from model_wrappers import HuggingFaceModel
         llm = HuggingFaceModel(
             name_or_path=args.model_name_or_path,
@@ -179,19 +184,19 @@ def get_llm(tokens_to_generate):
             max_new_tokens=tokens_to_generate,
         )
     
-    elif args.server_type == 'mamba':
-        from model_wrappers import MambaModel
-        # mamba uses its own generation function, do not pass in do_sample
-        # https://github.com/state-spaces/mamba/blob/009bec5ee37f586844a3fc89c040a9c1a9d8badf/mamba_ssm/utils/generation.py#L121
-        llm = MambaModel(
-            name_or_path=args.model_name_or_path,
-            repetition_penalty=1,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            top_p=args.top_p,
-            stop=args.stop_words,
-            max_new_tokens=tokens_to_generate,
-        )
+    # elif args.server_type == 'mamba':
+    #     from model_wrappers import MambaModel
+    #     # mamba uses its own generation function, do not pass in do_sample
+    #     # https://github.com/state-spaces/mamba/blob/009bec5ee37f586844a3fc89c040a9c1a9d8badf/mamba_ssm/utils/generation.py#L121
+    #     llm = MambaModel(
+    #         name_or_path=args.model_name_or_path,
+    #         repetition_penalty=1,
+    #         temperature=args.temperature,
+    #         top_k=args.top_k,
+    #         top_p=args.top_p,
+    #         stop=args.stop_words,
+    #         max_new_tokens=tokens_to_generate,
+    #     )
         
     else:
         raise RuntimeError(f'Unsupported server type {args.server_type}')

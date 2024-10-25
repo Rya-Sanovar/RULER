@@ -72,29 +72,29 @@ fi
 
 
 # Start server (you may want to run in other container.)
-if [ "$MODEL_FRAMEWORK" == "vllm" ]; then
-    python pred/serve_vllm.py \
-        --model=${MODEL_PATH} \
-        --tensor-parallel-size=${GPUS} \
-        --dtype bfloat16 \
-        --disable-custom-all-reduce \
-        &
+# if [ "$MODEL_FRAMEWORK" == "vllm" ]; then
+#     python pred/serve_vllm.py \
+#         --model=${MODEL_PATH} \
+#         --tensor-parallel-size=${GPUS} \
+#         --dtype bfloat16 \
+#         --disable-custom-all-reduce \
+#         &
 
-elif [ "$MODEL_FRAMEWORK" == "trtllm" ]; then
-    python pred/serve_trt.py \
-        --model_path=${MODEL_PATH} \
-        &
+# elif [ "$MODEL_FRAMEWORK" == "trtllm" ]; then
+#     python pred/serve_trt.py \
+#         --model_path=${MODEL_PATH} \
+#         &
 
-elif [ "$MODEL_FRAMEWORK" == "sglang" ]; then
-    python -m sglang.launch_server \
-        --model-path ${MODEL_PATH} \
-        --tp ${GPUS} \
-        --port 5000 \
-        --enable-flashinfer \
-        &
-    # use sglang/test/killall_sglang.sh to kill sglang server if it hangs
+# elif [ "$MODEL_FRAMEWORK" == "sglang" ]; then
+#     python -m sglang.launch_server \
+#         --model-path ${MODEL_PATH} \
+#         --tp ${GPUS} \
+#         --port 5000 \
+#         --enable-flashinfer \
+#         &
+#     # use sglang/test/killall_sglang.sh to kill sglang server if it hangs
 
-fi
+# fi
 
 
 # Start client (prepare data / call model API / obtain final metrics)
@@ -120,6 +120,7 @@ for MAX_SEQ_LENGTH in "${SEQ_LENGTHS[@]}"; do
             ${REMOVE_NEWLINE_TAB}
         
         start_time=$(date +%s)
+
         python pred/call_api.py \
             --data_dir ${DATA_DIR} \
             --save_dir ${PRED_DIR} \

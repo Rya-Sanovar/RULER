@@ -28,13 +28,15 @@ python variable_tracking.py   \
     --template "[INST] Memorize and track the chain(s) of variable assignment hidden in the following text.\n\n{context}\nQuestion: Find all variables that are assigned the value {query} in the text above. [/INST] Answer: According to the chain(s) of variable assignment in the text above, {num_v} variables are assgined the value {query}, they are: "
 """
 import os
+import json
 import argparse
 from pathlib import Path
 from tqdm import tqdm
 import random
 import string
 from constants import TASKS
-from nemo.collections.asr.parts.utils.manifest_utils import read_manifest, write_manifest
+from manifest import read_manifest, write_manifest
+# from nemo.collections.asr.parts.utils.manifest_utils import read_manifest, write_manifest
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")) 
@@ -46,7 +48,7 @@ parser.add_argument("--save_dir", type=Path, required=True, help='dataset folder
 parser.add_argument("--save_name", type=str, required=True, help='name of the save dataset jsonl file')
 parser.add_argument("--subset", type=str, default='validation', help='Options: validation or test')
 parser.add_argument("--tokenizer_path", type=str, required=True, help='path to the tokenizer model')
-parser.add_argument("--tokenizer_type",  type=str, default='nemo', help='[Options] nemo, hf, openai.')
+parser.add_argument("--tokenizer_type",  type=str, default='hf', help='[Options] nemo, hf, openai.')
 parser.add_argument("--max_seq_length", type=int, required=True, help='max sequence length including all input tokens and generated tokens.')
 parser.add_argument("--tokens_to_generate", type=int, default=120, help='number of tokens to generate')
 parser.add_argument("--num_samples", type=int, required=True, help='number of samples to generate')
@@ -203,6 +205,9 @@ def main():
                                               icl_example=icl_example)
     
     write_manifest(save_file, write_jsons)
+    with open(save_file, 'w') as f:
+        for entry in write_jsons:
+            f.write(json.dumps(entry) + '\n')
 
 if __name__=="__main__":
     main()
