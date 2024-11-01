@@ -175,7 +175,7 @@ def get_llm(tokens_to_generate):
         from model_wrappers import HuggingFaceModel
         llm = HuggingFaceModel(
             name_or_path=args.model_name_or_path,
-            do_sample=args.temperature > 0,
+            do_sample=False,
             repetition_penalty=1,
             temperature=args.temperature,
             top_k=args.top_k,

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TEMPERATURE="0.0" # greedy
+TEMPERATURE="0.0" # greedy - won't matter because do_sample has been hardcoded to False in call_api.py
 TOP_P="1.0"
-TOP_K="32"
+TOP_K="0" # to disable top_k set it to 0. 
 SEQ_LENGTHS=(
     # 131072
     # 65536
