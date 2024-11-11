@@ -17,7 +17,8 @@ import logging
 import requests
 import torch
 from typing import Dict, List, Optional
-
+import pandas as pd
+import numpy as np
 
 dump_csv = 0
 
@@ -29,6 +30,7 @@ class HuggingFaceModel:
         self.stop = self.generation_kwargs.pop('stop')
         self.cache_strategy = self.generation_kwargs.pop('caching_strategy')
         self.dump_csv = self.generation_kwargs.pop('dump_csv')
+        
         self.config = AutoConfig.from_pretrained(name_or_path, trust_remote_code = True, use_cache=True, caching_strategy=self.cache_strategy, dump_csv=self.dump_csv,)                
 
         self.tokenizer = AutoTokenizer.from_pretrained(name_or_path, trust_remote_code = True, config=self.config)
@@ -46,54 +48,72 @@ class HuggingFaceModel:
 
     def process_batch(self, prompts: List[str], **kwargs) -> List[dict]:
         inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)
-        generated_ids = self.model.generate(
+        outputs = self.model(
             **inputs,
-            **self.generation_kwargs
         )
-        generated_texts = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-
-        print(generated_texts)
-        results = []
-
-        for text, prompt in zip(generated_texts, prompts):
-            # remove the input form the generated text
-            if text.startswith(prompt):
-                text = text[len(prompt):]
-
-            if self.stop is not None:
-                for s in self.stop:
-                    text = text.split(s)[0]
-
-            results.append({'text': [text]})
-
-        print(f"CACHE STRAT = {self.cache_strategy}, RESULT: {results}")
-        return results
+        
+        return outputs
     
-llm_cache = HuggingFaceModel(
+llm1 = HuggingFaceModel(
             name_or_path="microsoft/Phi-3.5-mini-instruct",
             do_sample=False,
             repetition_penalty=1,
             temperature=1.0,
             top_p=1,
-            # top_k=0,
+            top_k=0,
             stop="",
             max_new_tokens=1,
             caching_strategy=1,
             dump_csv=dump_csv,
         )
 
-llm_normal = HuggingFaceModel(
+llm2 = HuggingFaceModel(
             name_or_path="microsoft/Phi-3.5-mini-instruct",
             do_sample=False,
             repetition_penalty=1,
             temperature=1.0,
             top_p=1,
-            # top_k=0,
+            top_k=0,
             stop="",
             max_new_tokens=1,
             caching_strategy=0,
             dump_csv=dump_csv,
         )
 
-llm_cache.process_batch(["My name is Alexander Hamilton and there's a million things I haven't done but just"])
-llm_normal.process_batch(["My name is Alexander Hamilton and there's a million things I haven't done but just"])
+cache = llm1.process_batch(["My name is Alexander Hamilton and there's a million things I haven't done but "])
+normal = llm2.process_batch(["My name is Alexander Hamilton and there's a million things I haven't done but "])
+
+layer=0
+tolerance = 1e-3
+
+cache_kv = cache.past_key_values
+normal_kv = normal.past_key_values
+
+suf_len = cache.hidden_states[0].shape[1]
+total_len = normal.hidden_states[0].shape[1]
+pref_len = total_len - suf_len
+
+print("suffix and total len: ", suf_len, " ", total_len)
+print("number of hidden states:", len(normal.hidden_states))
+
+cache_hs = cache.hidden_states[layer+1] # 0th layers hidden state is at index 1. At index 0, the initial hs is just input embeds. (Total 33 hs's for 32 layers)
+normal_hs = normal.hidden_states[layer+1]
+
+cache_q = cache.hidden_states[0]
+normal_q = normal.hidden_states[0]
+
+k_cache = cache_kv[layer][0]
+k_normal = normal_kv[layer][0]
+
+v_cache = cache_kv[layer][1]
+v_normal = normal_kv[layer][1]
+
+match_k = torch.allclose(k_cache, k_normal, atol=tolerance)
+match_v = torch.allclose(v_cache, v_normal, atol=tolerance)
+match_q = torch.allclose(cache_q, normal_q[:, pref_len:, :], atol=tolerance)
+match_first_hs = torch.allclose(cache_hs, normal_hs[:, pref_len:, :], atol=tolerance)
+
+print("k match? :", match_k)
+print("v match? :", match_v)
+print("q match? :", match_q)
+print("match first hs? ", match_first_hs)

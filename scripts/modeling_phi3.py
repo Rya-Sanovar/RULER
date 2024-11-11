@@ -19,6 +19,8 @@ import inspect
 import math
 import warnings
 from typing import List, Optional, Tuple, Union
+import pandas as pd
+import os
 
 import torch
 import torch.nn.functional as F
@@ -406,6 +408,8 @@ class Phi3FlashAttention2(Phi3Attention):
         output_attentions: bool = False,
         use_cache: bool = False,
         caching_and_prefill: Optional[int] = 0,
+        total_length: Optional[int] = -1,
+        dump_csv: Optional[int] = 0,
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         # Phi3FlashAttention2 attention does not support output_attentions
@@ -441,7 +445,34 @@ class Phi3FlashAttention2(Phi3Attention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         
-        kv_seq_len = key_states.shape[-2] # CnP=1, kv_seq_len = suffix length
+        kv_seq_len = key_states.shape[-2] # CnP=1, kv_seq_len = q_len = suffix length
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_preROPEquery = query_states.contiguous().view(bsz * self.num_heads * q_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_preROPEquery.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/preROPE_query.csv', index=False)
+            
+            print_preROPEkey = key_states.contiguous().view(bsz * self.num_heads * kv_seq_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_preROPEkey.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/preROPE_key.csv', index=False)
+            
+            print_preROPEvalue = value_states.contiguous().view(bsz * self.num_heads * kv_seq_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_preROPEvalue.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/preROPE_value.csv', index=False)
+            print(f"printed query, key, value to {output_dir}")
+            
+            
         if past_key_value is not None:
             if self.layer_idx is None:
                 raise ValueError(
@@ -455,19 +486,20 @@ class Phi3FlashAttention2(Phi3Attention):
 
         # Because the input can be padded, the absolute sequence length depends on the max position id.
         rotary_seq_len = max(kv_seq_len, position_ids[:, -1].max().item() + 1) # If CnP=1: this is suffix length + prefix length
-        
+        if (total_length != -1): # you are in either prefix or suffix phase of Prefix Caching
+            rotary_seq_len = total_length
+            
         cos, sin = self.rotary_emb(value_states, position_ids, seq_len=rotary_seq_len)
             
-        if(self.layer_idx == 0):
-            print("rope scaling long factor: ", len(self.rope_scaling['long_factor'])) #  rotary_emb = Phi3LongRope()
-            print("rope scaling short factor: ", len(self.rope_scaling['short_factor']))
-            print("rotary_seq_len: ", rotary_seq_len) # total length pref+suf
-            print("values states shape: ", value_states.shape) # (1, 32, suffix_len, 96)
-            print("keys states shape: ", key_states.shape)
-            print("pos ids: ", position_ids)
-            print("cos and sin shape: ", cos.shape, sin.shape) # (1, suffix_len, 96)
+        # if(self.layer_idx == 0):
+        #     print("rope scaling long factor: ", len(self.rope_scaling['long_factor'])) #  rotary_emb = Phi3LongRope()
+        #     print("rope scaling short factor: ", len(self.rope_scaling['short_factor']))
+        #     print("rotary_seq_len: ", rotary_seq_len) # total length pref+suf
+        #     print("values states shape: ", value_states.shape) # (1, 32, suffix_len, 96)
+        #     print("keys states shape: ", key_states.shape)
+        #     print("pos ids: ", position_ids)
+        #     print("cos and sin shape: ", cos.shape, sin.shape) # (1, suffix_len, 96)
 
-        # The problem is in ROPE!!!!!
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
         
         # query and key have ROPE info in them after this point on...
@@ -478,21 +510,21 @@ class Phi3FlashAttention2(Phi3Attention):
             and kv_seq_len > self.config.sliding_window
         )
         
-        if(self.layer_idx == 0):
-            print("use sliding windows: ", use_sliding_windows) # False
+        # if(self.layer_idx == 0):
+        #     print("use sliding windows: ", use_sliding_windows) # False
             
         if past_key_value is not None:
             # Activate slicing cache only if the config has a value `sliding_windows` attribute
             cache_has_contents = past_key_value.get_seq_length(self.layer_idx) > 0
-            if(self.layer_idx == 0):
-                print("cache has contents: ", cache_has_contents) # True for CnP=1, and decode phase. False for no caching prefill phase.
+            # if(self.layer_idx == 0):
+            #     print("cache has contents: ", cache_has_contents) # True for CnP=1, and decode phase. False for no caching prefill phase.
                 
             if (
                 getattr(self.config, "sliding_window", None) is not None
                 and kv_seq_len > self.config.sliding_window
                 and cache_has_contents
             ):
-                print("do we ever come in here")
+                # print("we never ever come in here")
                 slicing_tokens = 1 - self.config.sliding_window
 
                 past_key = past_key_value[self.layer_idx][0]
@@ -546,7 +578,33 @@ class Phi3FlashAttention2(Phi3Attention):
             key_states = key_states.to(target_dtype)
             value_states = value_states.to(target_dtype)
 
-        # Reashape to the expected shape for Flash Attention
+        ## q,k,v are of shape b, h, seqlen, headdim right now
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+                
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_query = query_states.contiguous().view(bsz * self.num_heads * q_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_query.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/query.csv', index=False)
+            
+            print_key = key_states.contiguous().view(bsz * self.num_heads * kv_seq_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_key.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/key.csv', index=False)
+            
+            print_value = value_states.contiguous().view(bsz * self.num_heads * kv_seq_len, self.head_dim).contiguous()
+            df = pd.DataFrame(print_value.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/value.csv', index=False)
+            print(f"printed query, key, value to {output_dir}")
+
+        # Reashape to the expected shape for Flash Attention - bsz, seq_len, h, headdim
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
@@ -566,7 +624,40 @@ class Phi3FlashAttention2(Phi3Attention):
         )
 
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
+        
+        if(dump_csv):
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+                
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            print_attn_output = attn_output.contiguous().view(bsz * q_len, self.hidden_size).contiguous()
+            df = pd.DataFrame(print_attn_output.detach().cpu().numpy())
+            df.to_csv(f'./{output_dir}/attn_output.csv', index=False)
+            print(f"printed attn output to {output_dir}")
+            
         attn_output = self.o_proj(attn_output)
+        
+        if(dump_csv):
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            print_out_proj = attn_output.contiguous().view(bsz * q_len, self.hidden_size).contiguous()
+            df = pd.DataFrame(print_out_proj.detach().cpu().numpy())
+            df.to_csv(f'./{output_dir}/out_proj.csv', index=False)
+            print(f"printed output proj to {output_dir}")
 
         if not output_attentions:
             attn_weights = None
@@ -653,6 +744,14 @@ class Phi3FlashAttention2(Phi3Attention):
 
             attn_output = pad_input(attn_output_unpad, indices_q, batch_size, query_length)
         else:
+            # if (self.layer_idx == 0):
+            #         print("this is MY flash attn")
+            #         print("dropout:", dropout) # 0.0 
+            #         print("softmax_scale:", softmax_scale) # None
+            #         print("causal:", causal) # True
+            #         print("q shape", query_states.shape)
+            #         print("k shape:", key_states.shape)
+            #         print("v shape:", value_states.shape)
             if not use_sliding_windows:
                 attn_output = flash_attn_func(
                     query_states,
@@ -661,6 +760,7 @@ class Phi3FlashAttention2(Phi3Attention):
                     dropout,
                     softmax_scale=softmax_scale,
                     causal=causal,
+                    return_attn_probs=False,
                 )
             else:
                 attn_output = flash_attn_func(
@@ -821,6 +921,7 @@ class Phi3DecoderLayer(nn.Module):
     def __init__(self, config: Phi3Config, layer_idx: int):
         super().__init__()
 
+        self.layer_idx = layer_idx
         self.config = config
         self.self_attn = PHI3_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=layer_idx)
 
@@ -840,6 +941,8 @@ class Phi3DecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         caching_and_prefill: Optional[int] = 0,
+        total_length: Optional[int] = -1,
+        dump_csv: Optional[int] = 0,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         if "padding_mask" in kwargs:
@@ -867,6 +970,27 @@ class Phi3DecoderLayer(nn.Module):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
+        
+        bsz = hidden_states.shape[0]
+        q_len = hidden_states.shape[1]
+        hidden_size = hidden_states.shape[2]
+        
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill.
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_layernorm1 = hidden_states.contiguous().view(bsz * q_len, hidden_size).contiguous()
+            df = pd.DataFrame(print_layernorm1.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/layernorm1.csv', index=False)
 
         # Self Attention - if CnP=1, this must update past_kv of this layer to total_seq_len and return suffix's hs.
         attn_outputs, self_attn_weights, present_key_value = self.self_attn(
@@ -877,15 +1001,83 @@ class Phi3DecoderLayer(nn.Module):
             output_attentions=output_attentions,
             use_cache=use_cache,
             caching_and_prefill=caching_and_prefill,
+            total_length=total_length,
+            dump_csv=dump_csv,
         )
 
         hidden_states = residual + self.resid_attn_dropout(attn_outputs)
-
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_residattn = hidden_states.contiguous().view(bsz * q_len, hidden_size).contiguous()
+            df = pd.DataFrame(print_residattn.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/residattn.csv', index=False)
+            
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+                
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_postattnln = hidden_states.contiguous().view(bsz * q_len, hidden_size).contiguous()
+            df = pd.DataFrame(print_postattnln.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/postattn_layernorm.csv', index=False)
+        
         hidden_states = self.mlp(hidden_states)
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+                
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_mlp = hidden_states.contiguous().view(bsz * q_len, hidden_size).contiguous()
+            df = pd.DataFrame(print_mlp.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/mlp.csv', index=False)
+            
         hidden_states = residual + self.resid_mlp_dropout(hidden_states)
-
+        
+        if(dump_csv): # only do it for suffix in caching or normal prefill
+            if(caching_and_prefill == 1):
+                output_dir = "cache"
+            else:
+                output_dir = "normal"
+            
+            output_dir = os.path.join(output_dir, f"layer_{self.layer_idx}")
+            
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+                
+            # print("query shape: ", query_states.shape) # 1, 32, 10, 96
+            print_mlpdropout = hidden_states.contiguous().view(bsz * q_len, hidden_size).contiguous()
+            df = pd.DataFrame(print_mlpdropout.detach().cpu().numpy())
+            df.to_csv(f'{output_dir}/mlpdropout.csv', index=False)
+        
         outputs = (hidden_states,)
 
         if output_attentions:
@@ -1060,6 +1252,8 @@ class Phi3Model(Phi3PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         caching_and_prefill: Optional[int] = 0,
+        total_length: Optional[int] = -1,
+        dump_csv: Optional[int] = 0,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1090,11 +1284,11 @@ class Phi3Model(Phi3PreTrainedModel):
 
         if use_cache:
             use_legacy_cache = not isinstance(past_key_values, Cache)
-            print("use legacy cache: ", use_legacy_cache) # True
+            # print("use legacy cache: ", use_legacy_cache) # True
             if use_legacy_cache:
                 past_key_values = DynamicCache.from_legacy_cache(past_key_values)
             past_key_values_length = past_key_values.get_usable_length(seq_length) # this is prefix length when caching_and_prefill=1
-            print("Phi3 model call= past_kv_length: ", past_key_values_length)
+            # print("Phi3 model call= past_kv_length: ", past_key_values_length)
 
         if position_ids is None:
             device = input_ids.device if input_ids is not None else inputs_embeds.device
@@ -1132,8 +1326,8 @@ class Phi3Model(Phi3PreTrainedModel):
 
         hidden_states = inputs_embeds # this is suffix's initial hidden state if caching_and_prefill=1
         
-        print("is attn mask None now:", (attention_mask is None)) # True
-        print("hidden state shape: ", hidden_states.shape) # (1, 10, 3072)
+        # print("is attn mask None now:", (attention_mask is None)) # True
+        # print("hidden state shape: ", hidden_states.shape) # (1, 10, 3072)
         
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
@@ -1164,6 +1358,8 @@ class Phi3Model(Phi3PreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     caching_and_prefill=caching_and_prefill,
+                    total_length=total_length,
+                    dump_csv=dump_csv,
                 )
 
             hidden_states = layer_outputs[0]
@@ -1203,6 +1399,7 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.caching_strategy = config.caching_strategy
+        self.dump_csv = config.dump_csv
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -1272,19 +1469,25 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
         'This is an example script .\n Certainly! Below is a sample script that demonstrates a simple task, such as calculating the sum'
         ```"""
 
-        print("cache strat init: ", self.caching_strategy) # 1
-        print("use cache: ", use_cache) # True
-        print("position ids: " , position_ids) # exists
-        print("is past kv none: ", (past_key_values is None)) # True
-        print("return dict: ", return_dict) # True
-        print("attention mask: ", attention_mask) # exists
-        print("is input embeds None: ", (inputs_embeds is None)) # don't exist
+        # print("cache strat init: ", self.caching_strategy) # 1
+        # print("use cache: ", use_cache) # True
+        # print("position ids: " , position_ids) # exists
+        # print("is past kv none: ", (past_key_values is None)) # True
+        # print("return dict: ", return_dict) # True
+        # print("attention mask: ", attention_mask) # exists
+        # print("is input embeds None: ", (inputs_embeds is None)) # don't exist
         
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        output_attentions = True
+        output_hidden_states = True
+        
+        prefix_position_ids = None
+        suffix_position_ids = None
         
         if(self.caching_strategy == 1 and past_key_values is None): # Prefix-caching AND Prefill Stage
             # This is the part where your cache identifying mechanism should start
@@ -1308,13 +1511,15 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 assert suffix_input_ids.shape == suffix_position_ids.shape == suffix_attention_mask.shape, \
                     f"Suffix shapes mismatch: {suffix_input_ids.shape}, {suffix_position_ids.shape}, {suffix_attention_mask.shape}"
                 
-            print(f"Total shape: {input_ids.shape}")
-            print(f"Prefix shape: {prefix_input_ids.shape}")  # Expect: [batch_size, midpoint]
-            print(f"Suffix shape: {suffix_input_ids.shape}") 
-            print(f"prefix pos ids: {prefix_position_ids}")
-            print(f"suffix pos ids: {suffix_position_ids}")
+            # print(f"Total shape: {input_ids.shape}")
+            # print(f"Prefix shape: {prefix_input_ids.shape}")  # Expect: [batch_size, midpoint]
+            # print(f"Suffix shape: {suffix_input_ids.shape}") 
+            # print(f"prefix pos ids: {prefix_position_ids}")
+            # print(f"suffix pos ids: {suffix_position_ids}")
             
-            print("################ PREFIX START #################")
+            prefix_position_ids = prefix_position_ids if prefix_position_ids is not None else None
+            suffix_position_ids = suffix_position_ids if suffix_position_ids is not None else None
+            # print("################ PREFIX START #################")
             
             # Do prefill for PREFIX input
             output_prefix = self.model(
@@ -1328,6 +1533,8 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 output_hidden_states=False,
                 return_dict=return_dict,
                 caching_and_prefill=0, # 0 because I just want it to behave normally
+                total_length = seq_len,
+                dump_csv = 0, # we don't dump prefix portion
             )
             
             outputs = output_prefix
@@ -1336,7 +1543,7 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
             prefix_last_hidden_state = output_prefix.last_hidden_state
             prefix_key_values = output_prefix.past_key_values
             
-            print("################ PREFIX DONE #################")
+            # print("################ PREFIX DONE #################")
             
             # print("prefix last hs shape: ", prefix_last_hidden_state.shape)
             # print("prefix KV shape: (numlayers, 2, tensor shape of Key): ", len(prefix_key_values), len(prefix_key_values[0]), prefix_key_values[0][0].shape)
@@ -1353,10 +1560,12 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 caching_and_prefill=1, 
+                total_length = seq_len,
+                dump_csv = self.dump_csv,
             )
             # print("suffix last hs shape: ", outputs.last_hidden_state.shape)
             
-            # last_hs is to be changed from siffix to (prefix+suffix) Tuples and BaseModelOutputWithPast are immutable 
+            # last_hs is to be changed from siffix to (prefix+suffix). Tuples and BaseModelOutputWithPast are immutable 
             new_last_hidden_state = torch.cat([prefix_last_hidden_state, outputs.last_hidden_state], dim=1)
             
             # print("final last hs shape: ", new_last_hidden_state.shape)
@@ -1369,8 +1578,8 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 attentions=outputs.attentions,
             )
             
-        else: # IF recompute prefill/decode (OR) prefix caching decode    
-            
+        else: # IF recompute prefill/decode (OR) prefix caching decode  
+        
             outputs = self.model(
                 input_ids=input_ids, # 1 token 
                 attention_mask=attention_mask,
@@ -1382,6 +1591,8 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 caching_and_prefill=0, # 0 because there's no difference in decode phase wrt prefill caching strategr
+                total_length = -1,
+                dump_csv = self.dump_csv,
             )
 
         hidden_states = outputs[0]
@@ -1487,7 +1698,6 @@ class Phi3ForCausalLM(Phi3PreTrainedModel):
                 tuple(past_state.index_select(0, beam_idx.to(past_state.device)) for past_state in layer_past),
             )
         return reordered_past
-
 
 @add_start_docstrings(
     """
@@ -1701,3 +1911,4 @@ class Phi3ForTokenClassification(Phi3PreTrainedModel):
             hidden_states=model_outputs.hidden_states,
             attentions=model_outputs.attentions,
         )
+
